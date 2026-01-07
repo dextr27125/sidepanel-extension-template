@@ -1,3 +1,5 @@
+import { DEFAULT_PROMPT, type Platform } from './types'
+
 interface GeminiResponse {
   candidates: {
     content: {
@@ -10,18 +12,30 @@ interface GeminiResponse {
 
 export async function generateComments(
   apiKey: string,
-  tweetText: string
+  postText: string,
+  platform: Platform = 'twitter',
+  customPrompt?: string
 ): Promise<string[]> {
-  const prompt = `You are a social media expert. Generate 3 different engaging reply comments for the following tweet. Each comment should be:
-- Natural and conversational
-- Between 20-150 characters
-- Appropriate for Twitter/X
-- Varied in tone (one supportive, one thoughtful/questioning, one witty/humorous)
+  // Use custom prompt if provided, otherwise use default
+  let prompt = customPrompt || DEFAULT_PROMPT;
 
-Tweet: "${tweetText}"
+  // Replace {{postText}} variable with actual post text
+  prompt = prompt.replace(/\{\{postText\}\}/g, postText);
 
-Return ONLY a JSON array with exactly 3 strings, no other text. Example format:
-["Comment 1", "Comment 2", "Comment 3"]`;
+  // If the prompt doesn't contain the post text variable, append it
+  if (!customPrompt?.includes('{{postText}}') && customPrompt) {
+    prompt = `${prompt}\n\nPost: "${postText}"\n\nReturn ONLY a JSON array with exactly 3 strings, no other text.`;
+  }
+
+  // Add platform context if using default prompt
+  if (!customPrompt) {
+    const platformNames: Record<Platform, string> = {
+      twitter: 'Twitter/X',
+      linkedin: 'LinkedIn',
+      facebook: 'Facebook'
+    };
+    prompt = prompt.replace('Appropriate for the platform', `Appropriate for ${platformNames[platform]}`);
+  }
 
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,

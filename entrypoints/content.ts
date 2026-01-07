@@ -1,71 +1,97 @@
 export default defineContentScript({
   matches: ['*://twitter.com/*', '*://x.com/*'],
   main() {
-    console.log('Twitter Commenter: Content script loaded');
+    console.log('Social Commenter: Twitter content script loaded');
 
     let lastUrl = location.href;
-    let lastTweetText: string | null = null;
+    let lastPostText: string | null = null;
 
-    // Send tweet text to sidepanel
-    const sendTweetUpdate = (text: string | null) => {
-      if (text !== lastTweetText) {
-        lastTweetText = text;
-        browser.runtime.sendMessage({ type: 'TWEET_TEXT_UPDATE', text }).catch(() => {
+    // Send post text to sidepanel
+    const sendPostUpdate = (text: string | null) => {
+      if (text !== lastPostText) {
+        lastPostText = text;
+        browser.runtime.sendMessage({
+          type: 'POST_TEXT_UPDATE',
+          text,
+          platform: 'twitter'
+        }).catch(() => {
           // Sidepanel might not be open, ignore error
         });
+        // Also send legacy message for backward compatibility
+        browser.runtime.sendMessage({
+          type: 'TWEET_TEXT_UPDATE',
+          text
+        }).catch(() => {});
       }
     };
 
-    // Check for tweet and send update
-    const checkAndSendTweet = () => {
-      const tweetText = getTweetText();
-      sendTweetUpdate(tweetText);
+    // Check for post and send update
+    const checkAndSendPost = () => {
+      const postText = getPostText();
+      sendPostUpdate(postText);
     };
 
     // Watch for URL changes (Twitter uses SPA navigation)
     const watchUrlChanges = () => {
       if (location.href !== lastUrl) {
         lastUrl = location.href;
-        // Small delay to let DOM update after navigation
-        setTimeout(checkAndSendTweet, 500);
+        setTimeout(checkAndSendPost, 500);
       }
     };
 
-    // Watch for DOM changes (tweet content loading)
+    // Watch for DOM changes
     const observer = new MutationObserver(() => {
       watchUrlChanges();
-      // Also check if tweet appeared on current page
-      if (location.href.includes('/status/') && !lastTweetText) {
-        checkAndSendTweet();
+      if (location.href.includes('/status/') && !lastPostText) {
+        checkAndSendPost();
       }
     });
 
     observer.observe(document.body, { childList: true, subtree: true });
 
-    // Also poll URL changes as backup
+    // Poll URL changes as backup
     setInterval(watchUrlChanges, 1000);
 
     // Initial check
-    setTimeout(checkAndSendTweet, 500);
+    setTimeout(checkAndSendPost, 500);
 
     // Listen for messages from sidepanel
-    browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
-      if (message.type === 'GET_TWEET_TEXT') {
-        const tweetText = getTweetText();
-        sendResponse({ success: true, text: tweetText });
+    browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      // New unified message format
+      if (message.type === 'GET_POST_TEXT' && message.platform === 'twitter') {
+        const postText = getPostText();
+        sendResponse({ success: true, text: postText });
         return true;
       }
 
-      if (message.type === 'INSERT_COMMENT') {
+      if (message.type === 'INSERT_COMMENT' && message.platform === 'twitter') {
         const success = insertComment(message.text);
         sendResponse({ success });
         return true;
       }
 
-      // Sidepanel requesting current tweet (on open)
+      if (message.type === 'REQUEST_POST_TEXT' && message.platform === 'twitter') {
+        const postText = getPostText();
+        sendResponse({ success: true, text: postText });
+        return true;
+      }
+
+      // Legacy message format (backward compatibility)
+      if (message.type === 'GET_TWEET_TEXT') {
+        const postText = getPostText();
+        sendResponse({ success: true, text: postText });
+        return true;
+      }
+
+      if (message.type === 'INSERT_COMMENT' && !message.platform) {
+        const success = insertComment(message.text);
+        sendResponse({ success });
+        return true;
+      }
+
       if (message.type === 'REQUEST_TWEET_TEXT') {
-        const tweetText = getTweetText();
-        sendResponse({ success: true, text: tweetText });
+        const postText = getPostText();
+        sendResponse({ success: true, text: postText });
         return true;
       }
 
@@ -74,7 +100,7 @@ export default defineContentScript({
   },
 });
 
-function getTweetText(): string | null {
+function getPostText(): string | null {
   // First, check if we're on a tweet page (URL contains /status/)
   if (!window.location.href.includes('/status/')) {
     return null;
@@ -160,7 +186,7 @@ function insertComment(text: string): boolean {
 
     return false;
   } catch (error) {
-    console.error('Twitter Commenter: Failed to insert comment', error);
+    console.error('Social Commenter: Failed to insert comment', error);
     return false;
   }
 }
